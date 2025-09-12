@@ -8,17 +8,18 @@
     "packages/*"
   ],
   "scripts": {
-  "dev:crm": "cross-env PORT=4001 node apps/crm/index.js",
-  "dev:web": "cross-env PORT=4000 CRM_BASE=http://127.0.0.1:4001 OTP_BYPASS=1 DEV_OTP_CODE=123456 node apps/web/server.js",
-  "dev:api": "cross-env PORT=4002 CRM_BASE=http://127.0.0.1:4001 node apps/api/index.js",
+    "dev:crm": "cross-env PORT=4001 node apps/crm/index.js",
+    "dev:web": "cross-env PORT=4000 CRM_BASE=http://127.0.0.1:4001 OTP_BYPASS=1 DEV_OTP_CODE=123456 node apps/web/server.js",
+    "dev:api": "cross-env PORT=4002 CRM_BASE=http://127.0.0.1:4001 node apps/api/index.js",
     "dev": "concurrently -k \"npm:dev:crm\" \"npm:dev:web\"",
     "dev:all": "concurrently -k \"npm:dev:crm\" \"npm:dev:web\" \"npm:dev:api\"",
     "start": "npm run dev:all",
-  "test:e2e": "node ./scripts/e2e.js",
-  "user:create": "node ./scripts/create-user.js"
+    "build": "echo \"no build step\"",
+    "test:e2e": "node ./scripts/e2e.js",
+    "user:create": "node ./scripts/create-user.js"
   },
-  "devDependencies": {
-  "dotenv": "^16.4.5",
+  "dependencies": {
+    "dotenv": "^16.4.5",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3"
   }
