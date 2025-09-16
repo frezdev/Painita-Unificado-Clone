@@ -504,7 +504,8 @@ app.post('/payment-link/:id', async (req, res) => {
 
 // Success/Cancel pages for payment redirects (basic messages)
 app.get('/pago/exito', (req, res) => {
-  res.type('html').send('<!doctype html><html><body><h3>Pago iniciado correctamente</h3><p>Puedes cerrar esta ventana.</p></body></html>');
+  res.sendFile(path.join(__dirname, 'public', 'pay_success.html'));
+  // res.type('html').send('<!doctype html><html><body><h3>Pago iniciado correctamente</h3><p>Puedes cerrar esta ventana.</p></body></html>');
 });
 app.get('/pago/cancelado', (req, res) => {
   res.type('html').send('<!doctype html><html><body><h3>Pago cancelado</h3><p>Puedes volver e intentarlo de nuevo.</p></body></html>');
