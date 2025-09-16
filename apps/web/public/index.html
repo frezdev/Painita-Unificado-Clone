@@ -673,11 +673,11 @@
         ];
         
         const linkWrap = document.createElement('div');
-        linkWrap.style.marginTop = '8px';
+        // linkWrap.style.marginTop = '8px';
         const linkA = document.createElement('a');
         linkA.target = '_blank';
         linkA.rel = 'noopener';
-        linkWrap.append('Link de pago: ', linkA);
+        // linkWrap.append('Link de pago: ', linkA);
         
         const errEl = document.createElement('div');
         errEl.className = 'error';
@@ -686,7 +686,7 @@
         const actions = [
           {
             type: 'primary',
-            text: 'Generar link de pago',
+            text: 'Pagar Crédito',
             onClick: async (e) => {
               const refId = state.solicitudId || state.formId;
               if (!refId) {
@@ -695,6 +695,9 @@
               }
               try {
                 const body = { monto: Math.round(desg.totalPagar), plazoDias: plazo };
+                e.target.textContent = 'Cargando...'
+                e.target.disabled = true
+
                 const r = await fetch(`${API}/payment-link/${refId}`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -703,7 +706,9 @@
                 const d = await r.json();
                 if (d && d.link) {
                   linkA.href = d.link;
-                  linkA.textContent = d.link;
+                  linkA.click()
+                  e.target.textContent = 'Pagar Crédito'
+                  // linkA.textContent = d.link;
                   errEl.textContent = '';
                 } else {
                   errEl.textContent = 'No se pudo generar el link de pago.';
@@ -728,7 +733,7 @@
           actions: actions
         });
         
-        statusCard.appendChild(linkWrap);
+        // statusCard.appendChild(linkWrap);
         statusCard.appendChild(errEl);
         
         const center = document.createElement('div');

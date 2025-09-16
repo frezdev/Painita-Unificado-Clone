@@ -54,14 +54,17 @@ export async function createTumipayPayment({ id, amount, installment, apiKey, ap
   if (authorization) headers['Authorization'] = authorization;
   // Some Tumipay deployments also accept Bearer or X-Api-Key
   if (!headers['Authorization'] && token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    // headers['Authorization'] = `Bearer ${token}`;
     headers['X-Api-Key'] = token;
+    headers['Token-Top'] = token;
   }
   if (!headers['Authorization'] && user && pass) {
+    headers['Token-Top'] = token;
     headers['Authorization'] = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
   }
   const hasAuth = !!headers['Authorization'];
 
+  console.log({headers})
   const payload = {
     reference: String(id),
     amount: Number(amount || 0),
@@ -121,7 +124,7 @@ export async function createTumipayPayment({ id, amount, installment, apiKey, ap
       details.push({ url: at.url, error: e?.message || String(e) });
     }
   }
-
+  
   const err = new Error('tumipay_link_failed');
   err.cause = { attempts: details, headers: { hasAuth, hasToken: !!token, hasBasic: !!(user && pass) } };
   throw err;

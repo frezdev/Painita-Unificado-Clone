@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { createTransaction, createTransactionMock } from './controllers/transactions/create-transaction.js';
 
 let Pool = null;
 try { ({ Pool } = await import('pg')); } catch {}
@@ -9,18 +10,17 @@ try { ({ Pool } = await import('pg')); } catch {}
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_FILE = path.resolve('crm.json');
 
-function readFileDB() {
+export function readFileDB() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { return { solicitudes: [], lastId: 0 }; }
 }
-function writeFileDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+export function writeFileDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 
 const connString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL;
 const usePg = !!(connString && Pool);
-let pool = null;
+export let pool = usePg ? new Pool({ connectionString: connString, ssl: { rejectUnauthorized: false } }) : null;
 
 export async function init() {
   if (!usePg) return;
-  pool = new Pool({ connectionString: connString, ssl: { rejectUnauthorized: false } });
   // migrate
   await pool.query(`
     create table if not exists solicitudes (
@@ -104,6 +104,16 @@ export async function init() {
       created_at timestamptz not null default now()
     );
     create index if not exists idx_usuarios_email on usuarios(email);
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id text primary key NOT NULL,
+      customer_id text COLLATE pg_catalog."default" NOT NULL,
+      coustomer_email character varying(120) COLLATE pg_catalog."default" NOT NULL,
+      status text COLLATE pg_catalog."default" NOT NULL DEFAULT 'pending'::text,
+      amount numeric,
+      created_at timestamp with time zone NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_transactions_id ON transactions(id);
   `);
 
   // Ensure image columns are wide enough (text) for base64/data URLs
@@ -718,3 +728,6 @@ export async function deleteUser(id) {
   if (!rowCount) throw Object.assign(new Error('not found'), { status: 404 });
   return { ok: true };
 }
+
+
+export const createNewTransaction = usePg ? createTransaction : createTransactionMock

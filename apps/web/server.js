@@ -5,12 +5,37 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import { calcularValorPrestamo } from '@painita/calc';
 import { CRMClient } from '@painita/crm-client';
-import { createTumipayPayment, buildPaymentLink } from '@painita/tumipay';
-import { calcularDesglose } from './public/js/utils/finanzas.js';
+// import { createTumipayPayment, buildPaymentLink } from '@painita/tumipay';
+// import { calcularDesglose } from './public/js/utils/finanzas.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import twilio from 'twilio';
+import { tumiPay } from './services/index.js';
+import { createNewTransaction, updateClient } from '../crm/db.js';
+import { validateTumipaySignature } from '../crm/utils/validate-tumipay-signature.js';
+import {
+  PUBLIC_BASE_URL,
+  TUMIPAY_NOTIFY_URL,
+  TUMIPAY_PAYMENT_METHOD,
+  TUMIPAY_RETURN_URL,
+  CRM_BASE as CRM_BASE_URL,
+  CRM_HOSTPORT,
+  CRM_HOST,
+  CRM_PORT,
+  FETCH_TIMEOUT_MS,
+  LEGACY_WEB_DIR,
+  TUMIPAY_KEY,
+  EXPIRED_TIME_LINK,
+  DEV_OTP_CODE,
+  OTP_BYPASS,
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_VERIFY_SERVICE_SID,
+  TWILIO_SERVICE_SID,
+  DEFAULT_COUNTRY_CODE,
+  LEGACY_INJECT_ADAPTER
+} from './config/env.js';
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,16 +67,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 function resolveCrmBase() {
-  if (process.env.CRM_BASE) return process.env.CRM_BASE;
-  if (process.env.CRM_HOSTPORT) return `http://${process.env.CRM_HOSTPORT}`;
-  if (process.env.CRM_HOST && process.env.CRM_PORT) return `http://${process.env.CRM_HOST}:${process.env.CRM_PORT}`;
+  if (CRM_BASE_URL) return CRM_BASE_URL;
+  if (CRM_HOSTPORT) return `http://${CRM_HOSTPORT}`;
+  if (CRM_HOST && CRM_PORT) return `http://${CRM_HOST}:${CRM_PORT}`;
   return 'http://localhost:4001';
 }
 const CRM_BASE = resolveCrmBase();
 const crm = new CRMClient(CRM_BASE);
 
 // Generic timeouts to avoid hanging on unreachable dependencies (Render env)
-const DEFAULT_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 8000);
+const DEFAULT_TIMEOUT_MS = Number(FETCH_TIMEOUT_MS || 8000);
 function abortAfter(ms) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), ms);
@@ -79,10 +104,10 @@ function withTimeout(promise, ms = DEFAULT_TIMEOUT_MS, tag = 'timeout') {
 
 // Dev bypass: if OTP_BYPASS=1 or DEV_OTP_CODE is set, we'll skip Twilio Verify and accept a fixed code.
 function isDevOtpEnabled() {
-  return process.env.OTP_BYPASS === '1' || !!process.env.DEV_OTP_CODE;
+  return OTP_BYPASS === '1' || !!DEV_OTP_CODE;
 }
 function getDevOtpCode() {
-  const raw = (process.env.DEV_OTP_CODE || '123456').toString();
+  const raw = (DEV_OTP_CODE || '123456').toString();
   const digits = raw.replace(/\D/g, '');
   // ensure 6 digits (pad or slice)
   if (!digits) return '123456';
@@ -90,14 +115,14 @@ function getDevOtpCode() {
 }
 
 function getTwilioClient() {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
+  const sid = TWILIO_ACCOUNT_SID;
+  const token = TWILIO_AUTH_TOKEN;
   if (!sid || !token) return null;
   try { return twilio(sid, token); } catch { return null; }
 }
 
 function getVerifyServiceSid() {
-  const sid = process.env.TWILIO_VERIFY_SERVICE_SID || process.env.TWILIO_SERVICE_SID;
+  const sid = TWILIO_VERIFY_SERVICE_SID || TWILIO_SERVICE_SID;
   if (!sid || !/^VA[a-z0-9]+/i.test(sid)) return null;
   return sid;
 }
@@ -107,7 +132,7 @@ function normalizePhone(input) {
   if (raw.startsWith('+')) return raw; // asumimos E.164 válido del cliente
   const digits = raw.replace(/\D/g,'');
   if (digits.length === 10) {
-    const cc = process.env.DEFAULT_COUNTRY_CODE || '+57';
+    const cc = DEFAULT_COUNTRY_CODE;
     return cc + digits;
   }
   // fallback simple: si tiene 11 y empieza por 1, asumimos +1
@@ -172,7 +197,7 @@ app.get('/otp/health', (req, res) => {
     ok: true,
     mode: isDevOtpEnabled() ? 'mock' : (hasTwilio ? 'twilio' : 'disabled'),
     hasTwilio,
-    defaultCountry: process.env.DEFAULT_COUNTRY_CODE || '+57'
+    defaultCountry: DEFAULT_COUNTRY_CODE || '+57'
   });
 });
 
@@ -195,7 +220,7 @@ function resolveLegacyDir(base) {
   return null;
 }
 
-const LEGACY_BASE = process.env.LEGACY_WEB_DIR;
+const LEGACY_BASE = LEGACY_WEB_DIR;
 const LEGACY_DIR = resolveLegacyDir(LEGACY_BASE);
 
 // Optional adapter script to expose a simple API client in window
@@ -229,7 +254,7 @@ if (LEGACY_DIR) {
   app.get('/', (req, res, next) => {
     const indexPath = path.join(LEGACY_DIR, 'index.html');
     if (!fs.existsSync(indexPath)) return next();
-    if (process.env.LEGACY_INJECT_ADAPTER === '1') {
+    if (LEGACY_INJECT_ADAPTER === '1') {
       try {
         let html = fs.readFileSync(indexPath, 'utf8');
         html = html.replace('</head>', '<script src="/adapter.js"></script></head>');
@@ -403,11 +428,12 @@ app.post('/payment-link/:id', async (req, res) => {
   const { id } = req.params;
   const { monto, plazoMeses, tasa, plazoDias } = req.body || {};
   // Calcular cuota si aplica y total con nuestro desglose
+
   const cuota = (monto && plazoMeses && tasa) ? calcularValorPrestamo(monto, plazoMeses, tasa) : null;
-  const total = (()=>{ try { const d = calcularDesglose(Number(monto||0), Number(plazoDias||0)); return Math.round(d.totalPagar); } catch { return Math.round(Number(monto||0)); } })();
+  // const total = (()=>{ try { const d = calcularDesglose(Number(monto||0), Number(plazoDias||0)); return Math.round(d.totalPagar); } catch { return Math.round(Number(monto||0)); } })();
   // Opcional: enriquecer con datos del cliente para Tumipay (si el CRM responde)
   let customer = undefined;
-  const publicBase = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const publicBase = PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
   try {
     if (/^\d+$/.test(String(id))) {
       const { d: form } = await fetchJsonWithTimeout(`${CRM_BASE}/formularios/${encodeURIComponent(id)}`);
@@ -426,32 +452,52 @@ app.post('/payment-link/:id', async (req, res) => {
     }
   } catch {}
   try {
-    const payload = {
-      id,
-      amount: total,
-      installment: cuota || undefined,
-      apiKey: process.env.TUMIPAY_KEY,
-      apiBase: process.env.TUMIPAY_BASE,
-      username: process.env.TUMIPAY_USER,
-      password: process.env.TUMIPAY_PASS,
-      customer,
-      returnUrl: process.env.TUMIPAY_RETURN_URL || `${publicBase}/pago/exito`,
-      cancelUrl: process.env.TUMIPAY_CANCEL_URL || `${publicBase}/pago/cancelado`,
-      notifyUrl: process.env.TUMIPAY_NOTIFY_URL || `${publicBase}/webhooks/tumipay`,
-      paymentMethod: process.env.TUMIPAY_PAYMENT_METHOD || 'ALL_METHODS'
-  };
-  const hasAuth = !!(process.env.TUMIPAY_AUTH || process.env.TUMIPAY_AUTHORIZATION || process.env.TUMIPAY_KEY || process.env.TUMIPAY_TOKEN || (process.env.TUMIPAY_USER && process.env.TUMIPAY_PASS));
-  console.log('[web] creating payment link', { id, total, base: payload.apiBase, hasAuth });
-  const { link } = await createTumipayPayment(payload);
-    res.json({ link, cuota, total });
+
+  console.log('[web] creating payment link', { id, total: monto });
+
+  const {ok, data} = await createNewTransaction({
+    amount: monto,
+    coustomer_email: customer.email,
+    customer_id: id,
+  })
+
+  if (!ok) {
+    throw new Error('Error al generar transacción')
+  }
+
+  const response = await tumiPay.createPaymentLink({
+    reference: data.id,
+    amount: monto,
+    currency: 'COP',
+    country: 'CO',
+    customer_data: {
+      email: customer.email,
+      full_name: customer.name,
+      legal_doc: customer.document.number,
+      legal_doc_type: customer.document.type,
+      phone_code: customer.phone_code,
+      phone_number: customer.phone_number
+    },
+    description: 'Pago de cuota de Painita',
+    expiration_time: EXPIRED_TIME_LINK,
+    ipn_url: TUMIPAY_NOTIFY_URL || `${publicBase}/webhooks/tumipay`,
+    payment_method: TUMIPAY_PAYMENT_METHOD,
+    redirect_url: TUMIPAY_RETURN_URL || `${publicBase}/pago/exito`,
+  })
+
+  if (!response.data) {
+    throw new Error('Error desconocido')
+  }
+  // const { link } = await createTumipayPayment(payload);
+    res.json({ link: response.data.payment_url, cuota, monto });
   } catch (e) {
     const cause = e && (e.cause || e.reason);
     console.error('[web] /payment-link error:', e?.message || e, cause ? ('→ cause: ' + (cause.message || JSON.stringify(cause))) : '');
     // Fallback opcional para desarrollo si la API falla
-    if ((process.env.TUMIPAY_ALLOW_MOCK_ON_FAIL || '').toLowerCase() === '1' || (process.env.TUMIPAY_ALLOW_MOCK_ON_FAIL || '').toLowerCase() === 'true') {
-      const link = buildPaymentLink({ id, amount: total, installment: cuota || undefined });
-      return res.json({ link, cuota, total, mock: true });
-    }
+    // if ((process.env.TUMIPAY_ALLOW_MOCK_ON_FAIL || '').toLowerCase() === '1' || (process.env.TUMIPAY_ALLOW_MOCK_ON_FAIL || '').toLowerCase() === 'true') {
+    //   const link = buildPaymentLink({ id, amount: monto, installment: cuota || undefined });
+    //   return res.json({ link, cuota, monto, mock: true });
+    // }
     res.status(502).json({ error: 'payment_link_failed', message: 'No se pudo generar el link de pago.' });
   }
 });
@@ -465,11 +511,25 @@ app.get('/pago/cancelado', (req, res) => {
 });
 
 // Webhook receiver (logs payload)
-app.post('/webhooks/tumipay', express.json(), (req, res) => {
+app.post('/webhooks/tumipay', (req, res) => {
+  const {headers } = req
   try {
-    console.log('[tumipay webhook]', req.body);
-  } catch {}
-  res.status(200).json({ ok: true });
+    if (headers['User-Agent'] !== 'Tumipay/1.1' && !headers['x-trx-signature']) {
+      res.status(401).json({ message: 'Unauthorized' })
+      return
+    }
+    const signature = headers['x-trx-signature']
+    const isValid = validateTumipaySignature(req.body, signature, TUMIPAY_KEY)
+
+    if (!isValid) return res.status(401).json({ message: 'Unauthorized' })
+
+    const { top_status, top_reference } = req.body
+
+    // TODO: actualizar el estado de transacción y/o solicitud
+    res.status(200).json({ ok: true });
+  } catch {
+    res.status(500).json({ message: 'Internal Error' })
+  }
 });
 
 const PORT = process.env.PORT || 4000;

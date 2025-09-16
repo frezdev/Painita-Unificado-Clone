@@ -58,24 +58,24 @@ export function PhoneVerification({ onVerified, onLogin }) {
         // Mostrar login inline para reanudar
         err.textContent = '';
         loginErr.textContent = '';
-        console.log('[login] showing login form for existing phone:', val);
+        // console.log('[login] showing login form for existing phone:', val);
         loginWrap.classList.remove('hidden');
-        console.log('[login] loginBtn element:', loginBtn);
+        // console.log('[login] loginBtn element:', loginBtn);
         if (loginBtn && !loginBtn._bound) {
-          console.log('[login] binding click event to login button');
+          // console.log('[login] binding click event to login button');
           loginBtn._bound = true;
           loginBtn.addEventListener('click', async () => {
             const pass = loginPass.value || '';
             if (!pass) { loginErr.textContent = 'Ingresa tu contraseña'; return; }
             loginErr.textContent = '';
-            console.log('[login] attempting login for phone:', val);
+            // console.log('[login] attempting login for phone:', val);
             try {
               loginBtn.disabled = true;
               const originalText = loginBtn.textContent;
               loginBtn.textContent = 'Iniciando...';
               const r = await fetch('/clientes/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: val, password: pass }) });
               const d = await r.json().catch(()=>({}));
-              console.log('[login] response:', r.status, d);
+              // console.log('[login] response:', r.status, d);
               loginBtn.disabled = false;
               loginBtn.textContent = originalText;
               if (!r.ok) {
@@ -85,7 +85,7 @@ export function PhoneVerification({ onVerified, onLogin }) {
               }
               // Exitoso: si hay formulario, reanudar; si no, avisar al caller para iniciar
               const form = d?.formulario || null;
-              console.log('[login] success, form:', form);
+              // console.log('[login] success, form:', form);
               onLogin?.(val, form);
             } catch (e) {
               console.error('[login] error:', e);
